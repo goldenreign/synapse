@@ -418,16 +418,16 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT ts_rank_cd(vector, to_tsquery('english', ?)) as rank,"
+                "SELECT similarity(value, ?) as rank,"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
-                " WHERE vector @@ to_tsquery('english', ?) AND "
+                " WHERE value ILIKE ? AND "
             )
             args = [search_query, search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE vector @@ to_tsquery('english', ?) AND "
+                " WHERE value ILIKE ? AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -600,7 +600,8 @@ def _parse_query(database_engine, search_term):
     results = re.findall(r"([\w\-]+)", search_term, re.UNICODE)
 
     if isinstance(database_engine, PostgresEngine):
-        return " & ".join(result + ":*" for result in results)
+        # return " & ".join(result + ":*" for result in results)
+        return "%" + "%".join(result for result in results) + "%"
     elif isinstance(database_engine, Sqlite3Engine):
         return " & ".join(result + "*" for result in results)
     else:

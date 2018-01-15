@@ -312,15 +312,15 @@ class RoomStore(SQLBaseStore):
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
                 "INSERT INTO event_search"
-                " (event_id, room_id, key, vector, stream_ordering, origin_server_ts)"
-                " VALUES (?,?,?,to_tsvector('english', ?),?,?)"
+                " (event_id, room_id, key, vector, stream_ordering, origin_server_ts, value)"
+                " VALUES (?,?,?,to_tsvector('english', ?),?,?,?)"
             )
             txn.execute(
                 sql,
                 (
                     event.event_id, event.room_id, key, value,
                     event.internal_metadata.stream_ordering,
-                    event.origin_server_ts,
+                    event.origin_server_ts, value
                 )
             )
         elif isinstance(self.database_engine, Sqlite3Engine):
