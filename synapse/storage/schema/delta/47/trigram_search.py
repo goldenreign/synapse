@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 POSTGRES_TABLE = """
 CREATE EXTENSION pg_trgm;
 ALTER TABLE event_search ADD COLUMN value text;
-CREATE INDEX index_value_on_event_search_trigram ON event_search USING gin (value gin_trgm_ops);
 """
 
 
@@ -33,6 +32,32 @@ def run_create(cur, database_engine, *args, **kwargs):
     if isinstance(database_engine, PostgresEngine):
         for statement in get_statements(POSTGRES_TABLE.splitlines()):
             cur.execute(statement)
+
+        cur.execute("SELECT MIN(stream_ordering) FROM events")
+        rows = cur.fetchall()
+        min_stream_id = rows[0][0]
+
+        cur.execute("SELECT MAX(stream_ordering) FROM events")
+        rows = cur.fetchall()
+        max_stream_id = rows[0][0]
+
+        if min_stream_id is not None and max_stream_id is not None:
+            progress = {
+                "target_min_stream_id_inclusive": min_stream_id,
+                "max_stream_id_exclusive": max_stream_id + 1,
+                "rows_inserted": 0,
+                "have_added_indexes": False,
+            }
+            progress_json = ujson.dumps(progress)
+
+            sql = (
+                "INSERT into background_updates (update_name, progress_json)"
+                " VALUES (?, ?)"
+            )
+
+            sql = database_engine.convert_param_style(sql)
+
+            cur.execute(sql, ("event_search_postgres_trigram", progress_json))
     elif isinstance(database_engine, Sqlite3Engine):
         pass
     else:

@@ -32,6 +32,7 @@ class SearchStore(BackgroundUpdateStore):
     EVENT_SEARCH_UPDATE_NAME = "event_search"
     EVENT_SEARCH_ORDER_UPDATE_NAME = "event_search_order"
     EVENT_SEARCH_USE_GIST_POSTGRES_NAME = "event_search_postgres_gist"
+    EVENT_SEARCH_POSTGRES_TRIGRAM_NAME = "event_search_postgres_trigram"
 
     def __init__(self, db_conn, hs):
         super(SearchStore, self).__init__(db_conn, hs)
@@ -45,6 +46,10 @@ class SearchStore(BackgroundUpdateStore):
         self.register_background_update_handler(
             self.EVENT_SEARCH_USE_GIST_POSTGRES_NAME,
             self._background_reindex_gist_search
+        )
+        self.register_background_update_handler(
+            self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME,
+            self._background_reindex_search_trigram
         )
 
     @defer.inlineCallbacks
@@ -241,6 +246,130 @@ class SearchStore(BackgroundUpdateStore):
             yield self._end_background_update(self.EVENT_SEARCH_ORDER_UPDATE_NAME)
 
         defer.returnValue(num_rows)
+
+    @defer.inlineCallbacks
+    def _background_reindex_search_trigram(self, progress, batch_size):
+        target_min_stream_id = progress["target_min_stream_id_inclusive"]
+        max_stream_id = progress["max_stream_id_exclusive"]
+        rows_inserted = progress.get("rows_inserted", 0)
+        have_added_index = progress['have_added_indexes']
+
+        if not have_added_index:
+            def create_index(conn):
+                conn.rollback()
+                conn.set_session(autocommit=True)
+                c = conn.cursor()
+
+                if isinstance(self.database_engine, PostgresEngine):
+                    c.execute(
+                        "CREATE INDEX index_value_on_event_search_trigram ON event_search"
+                        " USING gin (value gin_trgm_ops)"
+                    )
+                elif isinstance(self.database_engine, Sqlite3Engine):
+                    raise Exception("Trigram search for Sqlite is not supported")
+                else:
+                    # This should be unreachable.
+                    raise Exception("Unrecognized database engine")
+
+                conn.set_session(autocommit=False)
+
+            yield self.runWithConnection(create_index)
+
+            pg = dict(progress)
+            pg["have_added_indexes"] = True
+
+            yield self.runInteraction(
+                self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME,
+                self._background_update_progress_txn,
+                self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, pg,
+            )
+
+        INSERT_CLUMP_SIZE = 1000
+        TYPES = ["m.room.name", "m.room.message", "m.room.topic"]
+
+        def reindex_search_txn(txn):
+            sql = (
+                "SELECT stream_ordering, event_id, room_id, type, content FROM events"
+                " WHERE ? <= stream_ordering AND stream_ordering < ?"
+                " AND (%s)"
+                " ORDER BY stream_ordering DESC"
+                " LIMIT ?"
+            ) % (" OR ".join("type = '%s'" % (t,) for t in TYPES),)
+
+            txn.execute(sql, (target_min_stream_id, max_stream_id, batch_size))
+
+            rows = self.cursor_to_dict(txn)
+            if not rows:
+                return 0
+
+            min_stream_id = rows[-1]["stream_ordering"]
+
+            event_search_rows = []
+            for row in rows:
+                try:
+                    event_id = row["event_id"]
+                    room_id = row["room_id"]
+                    etype = row["type"]
+                    try:
+                        content = json.loads(row["content"])
+                    except Exception:
+                        continue
+
+                    if etype == "m.room.message":
+                        key = "content.body"
+                        value = content["body"]
+                    elif etype == "m.room.topic":
+                        key = "content.topic"
+                        value = content["topic"]
+                    elif etype == "m.room.name":
+                        key = "content.name"
+                        value = content["name"]
+                except (KeyError, AttributeError):
+                    # If the event is missing a necessary field then
+                    # skip over it.
+                    continue
+
+                if not isinstance(value, basestring):
+                    # If the event body, name or topic isn't a string
+                    # then skip over it
+                    continue
+
+                event_search_rows.append((value, event_id, room_id, key))
+
+            if isinstance(self.database_engine, PostgresEngine):
+                sql = (
+                    "UPDATE event_search SET value = ? WHERE event_id = ? AND room_id = ? AND key = ?"
+                )
+            elif isinstance(self.database_engine, Sqlite3Engine):
+                raise Exception("Trigram search for Sqlite is not supported")
+            else:
+                # This should be unreachable.
+                raise Exception("Unrecognized database engine")
+
+            for index in range(0, len(event_search_rows), INSERT_CLUMP_SIZE):
+                clump = event_search_rows[index:index + INSERT_CLUMP_SIZE]
+                txn.executemany(sql, clump)
+
+            progress = {
+                "target_min_stream_id_inclusive": target_min_stream_id,
+                "max_stream_id_exclusive": min_stream_id,
+                "rows_inserted": rows_inserted + len(event_search_rows)
+            }
+
+            self._background_update_progress_txn(
+                txn, self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, progress
+            )
+
+            return len(event_search_rows)
+
+        result = yield self.runInteraction(
+            self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, reindex_search_txn
+        )
+
+        if not result:
+            yield self._end_background_update(self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME)
+
+        defer.returnValue(result)
 
     @defer.inlineCallbacks
     def search_msgs(self, room_ids, search_term, keys):
