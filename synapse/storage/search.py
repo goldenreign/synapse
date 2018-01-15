@@ -22,6 +22,7 @@ from synapse.storage.engines import PostgresEngine, Sqlite3Engine
 import logging
 import re
 import ujson as json
+from psycopg2 import ProgrammingError
 
 
 logger = logging.getLogger(__name__)
@@ -252,24 +253,27 @@ class SearchStore(BackgroundUpdateStore):
         target_min_stream_id = progress["target_min_stream_id_inclusive"]
         max_stream_id = progress["max_stream_id_exclusive"]
         rows_inserted = progress.get("rows_inserted", 0)
-        have_added_index = progress['have_added_indexes']
+        have_added_indexes = progress['have_added_indexes']
 
-        if not have_added_index:
+        if not have_added_indexes:
             def create_index(conn):
                 conn.rollback()
                 conn.set_session(autocommit=True)
                 c = conn.cursor()
 
-                if isinstance(self.database_engine, PostgresEngine):
-                    c.execute(
-                        "CREATE INDEX index_value_on_event_search_trigram ON event_search"
-                        " USING gin (value gin_trgm_ops)"
-                    )
-                elif isinstance(self.database_engine, Sqlite3Engine):
-                    raise Exception("Trigram search for Sqlite is not supported")
-                else:
-                    # This should be unreachable.
-                    raise Exception("Unrecognized database engine")
+                try:
+                    if isinstance(self.database_engine, PostgresEngine):
+                        c.execute(
+                            "CREATE INDEX index_value_on_event_search_trigram ON event_search"
+                            " USING gin (value gin_trgm_ops)"
+                        )
+                    elif isinstance(self.database_engine, Sqlite3Engine):
+                        raise Exception("Trigram search for Sqlite is not supported")
+                    else:
+                        # This should be unreachable.
+                        raise Exception("Unrecognized database engine")
+                except ProgrammingError:
+                    pass
 
                 conn.set_session(autocommit=False)
 
@@ -353,7 +357,8 @@ class SearchStore(BackgroundUpdateStore):
             progress = {
                 "target_min_stream_id_inclusive": target_min_stream_id,
                 "max_stream_id_exclusive": min_stream_id,
-                "rows_inserted": rows_inserted + len(event_search_rows)
+                "rows_inserted": rows_inserted + len(event_search_rows),
+                "have_added_indexes": have_added_indexes
             }
 
             self._background_update_progress_txn(
