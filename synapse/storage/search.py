@@ -418,16 +418,16 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT ts_rank_cd(vector, to_tsquery('english', ?)) AS rank,"
+                "SELECT similarity(?, value) AS rank,"
                 " room_id, event_id"
                 " FROM event_search"
-                " WHERE vector @@ to_tsquery('english', ?)"
+                " WHERE value ILIKE ?"
             )
             args = [search_query, search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE vector @@ to_tsquery('english', ?)"
+                " WHERE value ILIKE ?"
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -553,7 +553,7 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT similarity(value, ?) as rank,"
+                "SELECT similarity(?, value) as rank,"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
                 " WHERE value ILIKE ? AND "
@@ -656,12 +656,12 @@ class SearchStore(BackgroundUpdateStore):
 def _find_highlights_in_postgres(search_term):
     """
     Args:
-        search_query (str)
+        search_term (str)
 
     Returns:
-        Array of strings.
+        A set of strings.
     """
-    return _tokenize_query(search_term)
+    return set(_tokenize_query(search_term))
 
 def _parse_query(database_engine, search_term):
     """Takes a plain unicode string from the user and converts it into a form
