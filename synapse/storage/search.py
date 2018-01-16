@@ -556,13 +556,15 @@ class SearchStore(BackgroundUpdateStore):
                 "SELECT word_similarity(?, value) as rank,"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
-                " WHERE value ILIKE ? AND "
+                # " WHERE value ILIKE ? AND "
+                " WHERE word_similarity(?, value) > 0.2 AND "
             )
             args = [search_query, search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE value ILIKE ? AND "
+                # " WHERE value ILIKE ? AND "
+                " WHERE word_similarity(?, value) > 0.2 AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -674,7 +676,8 @@ def _parse_query(database_engine, search_term):
 
     if isinstance(database_engine, PostgresEngine):
         # return " & ".join(result + ":*" for result in results)
-        return "%" + "%".join(result for result in results) + "%"
+        # return "%" + "%".join(result for result in results) + "%"
+        return " ".join(result for result in results)
     elif isinstance(database_engine, Sqlite3Engine):
         return " & ".join(result + "*" for result in results)
     else:
