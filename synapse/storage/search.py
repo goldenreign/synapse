@@ -553,18 +553,16 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT word_similarity(?, value) as rank,"
+                "SELECT"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
-                # " WHERE value ILIKE ? AND "
-                " WHERE word_similarity(?, value) > 0.2 AND "
+                " WHERE value ILIKE ? AND "
             )
-            args = [search_query, search_query] + args
+            args = [search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                # " WHERE value ILIKE ? AND "
-                " WHERE word_similarity(?, value) > 0.2 AND "
+                " WHERE value ILIKE ? AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -643,7 +641,7 @@ class SearchStore(BackgroundUpdateStore):
             "results": [
                 {
                     "event": event_map[r["event_id"]],
-                    "rank": r["rank"],
+                    "rank": 1,
                     "pagination_token": "%s,%s" % (
                         r["origin_server_ts"], r["stream_ordering"]
                     ),
@@ -675,9 +673,7 @@ def _parse_query(database_engine, search_term):
     results = _tokenize_query(search_term)
 
     if isinstance(database_engine, PostgresEngine):
-        # return " & ".join(result + ":*" for result in results)
-        # return "%" + "%".join(result for result in results) + "%"
-        return " ".join(result for result in results)
+        return "%" + "%".join(result for result in results) + "%"
     elif isinstance(database_engine, Sqlite3Engine):
         return " & ".join(result + "*" for result in results)
     else:
