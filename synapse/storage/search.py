@@ -418,7 +418,7 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT similarity(?, value) AS rank,"
+                "SELECT word_similarity(?, value) AS rank,"
                 " room_id, event_id"
                 " FROM event_search"
                 " WHERE value ILIKE ?"
@@ -553,7 +553,7 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT similarity(?, value) as rank,"
+                "SELECT word_similarity(?, value) as rank,"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
                 " WHERE value ILIKE ? AND "
