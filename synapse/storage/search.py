@@ -273,6 +273,7 @@ class SearchStore(BackgroundUpdateStore):
                         # This should be unreachable.
                         raise Exception("Unrecognized database engine")
                 except ProgrammingError:
+                    # Skip error if index already exist
                     pass
 
                 conn.set_session(autocommit=False)
@@ -471,7 +472,7 @@ class SearchStore(BackgroundUpdateStore):
 
         highlights = None
         if isinstance(self.database_engine, PostgresEngine):
-            highlights = yield self._find_highlights_in_postgres(search_query, events)
+            highlights = self._find_highlights_in_postgres(search_term)
 
         count_sql += " GROUP BY room_id"
 
@@ -626,7 +627,7 @@ class SearchStore(BackgroundUpdateStore):
 
         highlights = None
         if isinstance(self.database_engine, PostgresEngine):
-            highlights = yield self._find_highlights_in_postgres(search_query, events)
+            highlights = self._find_highlights_in_postgres(search_term)
 
         count_sql += " GROUP BY room_id"
 
@@ -652,76 +653,15 @@ class SearchStore(BackgroundUpdateStore):
             "count": count,
         })
 
-    def _find_highlights_in_postgres(self, search_query, events):
-        """Given a list of events and a search term, return a list of words
-        that match from the content of the event.
+def _find_highlights_in_postgres(self, search_term):
+    """
+    Args:
+        search_query (str)
 
-        This is used to give a list of words that clients can match against to
-        highlight the matching parts.
-
-        Args:
-            search_query (str)
-            events (list): A list of events
-
-        Returns:
-            deferred : A set of strings.
-        """
-        def f(txn):
-            highlight_words = set()
-            for event in events:
-                # As a hack we simply join values of all possible keys. This is
-                # fine since we're only using them to find possible highlights.
-                values = []
-                for key in ("body", "name", "topic"):
-                    v = event.content.get(key, None)
-                    if v:
-                        values.append(v)
-
-                if not values:
-                    continue
-
-                value = " ".join(values)
-
-                # We need to find some values for StartSel and StopSel that
-                # aren't in the value so that we can pick results out.
-                start_sel = "<"
-                stop_sel = ">"
-
-                while start_sel in value:
-                    start_sel += "<"
-                while stop_sel in value:
-                    stop_sel += ">"
-
-                query = "SELECT ts_headline(?, to_tsquery('english', ?), %s)" % (
-                    _to_postgres_options({
-                        "StartSel": start_sel,
-                        "StopSel": stop_sel,
-                        "MaxFragments": "50",
-                    })
-                )
-                txn.execute(query, (value, search_query,))
-                headline, = txn.fetchall()[0]
-
-                # Now we need to pick the possible highlights out of the haedline
-                # result.
-                matcher_regex = "%s(.*?)%s" % (
-                    re.escape(start_sel),
-                    re.escape(stop_sel),
-                )
-
-                res = re.findall(matcher_regex, headline)
-                highlight_words.update([r.lower() for r in res])
-
-            return highlight_words
-
-        return self.runInteraction("_find_highlights", f)
-
-
-def _to_postgres_options(options_dict):
-    return "'%s'" % (
-        ",".join("%s=%s" % (k, v) for k, v in options_dict.items()),
-    )
-
+    Returns:
+        Array of strings.
+    """
+    return _tokenize_query(search_term)
 
 def _parse_query(database_engine, search_term):
     """Takes a plain unicode string from the user and converts it into a form
@@ -730,8 +670,7 @@ def _parse_query(database_engine, search_term):
     that is supported by default.
     """
 
-    # Pull out the individual words, discarding any non-word characters.
-    results = re.findall(r"([\w\-]+)", search_term, re.UNICODE)
+    results = _tokenize_query(search_term)
 
     if isinstance(database_engine, PostgresEngine):
         # return " & ".join(result + ":*" for result in results)
@@ -741,3 +680,7 @@ def _parse_query(database_engine, search_term):
     else:
         # This should be unreachable.
         raise Exception("Unrecognized database engine")
+
+def _tokenize_query(search_term):
+    # Pull out the individual words, discarding any non-word characters.
+    return re.findall(r"([\w\-]+)", search_term, re.UNICODE)
