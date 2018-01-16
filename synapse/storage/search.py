@@ -472,7 +472,7 @@ class SearchStore(BackgroundUpdateStore):
 
         highlights = None
         if isinstance(self.database_engine, PostgresEngine):
-            highlights = self._find_highlights_in_postgres(search_term)
+            highlights = _find_highlights_in_postgres(search_term)
 
         count_sql += " GROUP BY room_id"
 
@@ -627,7 +627,7 @@ class SearchStore(BackgroundUpdateStore):
 
         highlights = None
         if isinstance(self.database_engine, PostgresEngine):
-            highlights = self._find_highlights_in_postgres(search_term)
+            highlights = _find_highlights_in_postgres(search_term)
 
         count_sql += " GROUP BY room_id"
 
@@ -653,7 +653,7 @@ class SearchStore(BackgroundUpdateStore):
             "count": count,
         })
 
-def _find_highlights_in_postgres(self, search_term):
+def _find_highlights_in_postgres(search_term):
     """
     Args:
         search_query (str)
