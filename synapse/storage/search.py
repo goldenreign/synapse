@@ -50,7 +50,7 @@ class SearchStore(BackgroundUpdateStore):
         )
         self.register_background_update_handler(
             self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME,
-            self._background_reindex_search_trigram
+            self._background_fill_search_trigram_values
         )
 
     @defer.inlineCallbacks
@@ -249,45 +249,10 @@ class SearchStore(BackgroundUpdateStore):
         defer.returnValue(num_rows)
 
     @defer.inlineCallbacks
-    def _background_reindex_search_trigram(self, progress, batch_size):
+    def _background_fill_search_trigram_values(self, progress, batch_size):
         target_min_stream_id = progress["target_min_stream_id_inclusive"]
         max_stream_id = progress["max_stream_id_exclusive"]
         rows_inserted = progress.get("rows_inserted", 0)
-        have_added_indexes = progress['have_added_indexes']
-
-        if not have_added_indexes:
-            def create_index(conn):
-                conn.rollback()
-                conn.set_session(autocommit=True)
-                c = conn.cursor()
-
-                try:
-                    if isinstance(self.database_engine, PostgresEngine):
-                        c.execute(
-                            "CREATE INDEX index_value_on_event_search_trigram ON event_search"
-                            " USING gin (value gin_trgm_ops)"
-                        )
-                    elif isinstance(self.database_engine, Sqlite3Engine):
-                        raise Exception("Trigram search for Sqlite is not supported")
-                    else:
-                        # This should be unreachable.
-                        raise Exception("Unrecognized database engine")
-                except ProgrammingError:
-                    # Skip error if index already exist
-                    pass
-
-                conn.set_session(autocommit=False)
-
-            yield self.runWithConnection(create_index)
-
-            pg = dict(progress)
-            pg["have_added_indexes"] = True
-
-            yield self.runInteraction(
-                self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME,
-                self._background_update_progress_txn,
-                self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, pg,
-            )
 
         INSERT_CLUMP_SIZE = 1000
         TYPES = ["m.room.name", "m.room.message", "m.room.topic"]
@@ -358,8 +323,7 @@ class SearchStore(BackgroundUpdateStore):
             progress = {
                 "target_min_stream_id_inclusive": target_min_stream_id,
                 "max_stream_id_exclusive": min_stream_id,
-                "rows_inserted": rows_inserted + len(event_search_rows),
-                "have_added_indexes": have_added_indexes
+                "rows_inserted": rows_inserted + len(event_search_rows)
             }
 
             self._background_update_progress_txn(
@@ -418,16 +382,16 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT word_similarity(?, value) AS rank,"
+                "SELECT word_similarity(f_unaccent(?), value) AS rank,"
                 " room_id, event_id"
                 " FROM event_search"
-                " WHERE value ILIKE ?"
+                " WHERE f_unaccent(value) ILIKE f_unaccent(?)"
             )
             args = [search_query, search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE value ILIKE ?"
+                " WHERE f_unaccent(value) ILIKE f_unaccent(?)"
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -556,13 +520,13 @@ class SearchStore(BackgroundUpdateStore):
                 "SELECT"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
-                " WHERE value ILIKE ? AND "
+                " WHERE f_unaccent(value) ILIKE f_unaccent(?) AND "
             )
             args = [search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE value ILIKE ? AND "
+                " WHERE value ILIKE f_unaccent(?) AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):

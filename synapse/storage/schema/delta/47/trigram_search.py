@@ -24,13 +24,17 @@ logger = logging.getLogger(__name__)
 
 POSTGRES_TABLE = """
 CREATE EXTENSION pg_trgm;
+CREATE EXTENSION unaccent;
+CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text AS $func$ SELECT public.unaccent('public.unaccent', $1) $func$  LANGUAGE sql IMMUTABLE;
 ALTER TABLE event_search ADD COLUMN value text;
+CREATE INDEX index_value_on_event_search_trigram ON event_search USING gin (f_unaccent(value) gin_trgm_ops);
 """
 
 
 def run_create(cur, database_engine, *args, **kwargs):
     if isinstance(database_engine, PostgresEngine):
         for statement in get_statements(POSTGRES_TABLE.splitlines()):
+
             cur.execute(statement)
 
         cur.execute("SELECT MIN(stream_ordering) FROM events")
@@ -46,7 +50,6 @@ def run_create(cur, database_engine, *args, **kwargs):
                 "target_min_stream_id_inclusive": min_stream_id,
                 "max_stream_id_exclusive": max_stream_id + 1,
                 "rows_inserted": 0,
-                "have_added_indexes": False,
             }
             progress_json = ujson.dumps(progress)
 
