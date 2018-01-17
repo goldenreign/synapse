@@ -259,7 +259,7 @@ class SearchStore(BackgroundUpdateStore):
 
         def reindex_search_txn(txn):
             sql = (
-                "SELECT stream_ordering, event_id, room_id, type, content FROM events"
+                "SELECT stream_ordering, event_id, type, content FROM events"
                 " WHERE ? <= stream_ordering AND stream_ordering < ?"
                 " AND (%s)"
                 " ORDER BY stream_ordering DESC"
@@ -278,7 +278,6 @@ class SearchStore(BackgroundUpdateStore):
             for row in rows:
                 try:
                     event_id = row["event_id"]
-                    room_id = row["room_id"]
                     etype = row["type"]
                     try:
                         content = json.loads(row["content"])
@@ -304,11 +303,11 @@ class SearchStore(BackgroundUpdateStore):
                     # then skip over it
                     continue
 
-                event_search_rows.append((value, event_id, room_id, key))
+                event_search_rows.append((value, event_id))
 
             if isinstance(self.database_engine, PostgresEngine):
                 sql = (
-                    "UPDATE event_search SET value = ? WHERE event_id = ? AND room_id = ? AND key = ?"
+                    "UPDATE event_search SET value = ? WHERE event_id = ?"
                 )
             elif isinstance(self.database_engine, Sqlite3Engine):
                 raise Exception("Trigram search for Sqlite is not supported")
