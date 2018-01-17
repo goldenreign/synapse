@@ -382,7 +382,7 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT word_similarity(f_unaccent(?), value) AS rank,"
+                "SELECT word_similarity(f_unaccent(?), f_unaccent(value)) AS rank,"
                 " room_id, event_id"
                 " FROM event_search"
                 " WHERE f_unaccent(value) ILIKE f_unaccent(?)"
@@ -526,7 +526,7 @@ class SearchStore(BackgroundUpdateStore):
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE value ILIKE f_unaccent(?) AND "
+                " WHERE f_unaccent(value) ILIKE f_unaccent(?) AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
