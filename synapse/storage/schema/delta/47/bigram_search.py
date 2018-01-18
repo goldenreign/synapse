@@ -23,11 +23,11 @@ logger = logging.getLogger(__name__)
 
 
 POSTGRES_TABLE = """
-CREATE EXTENSION pg_trgm;
+CREATE EXTENSION pg_bigm;
 CREATE EXTENSION unaccent;
 CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text AS $func$ SELECT public.unaccent('public.unaccent', $1) $func$  LANGUAGE sql IMMUTABLE;
-ALTER TABLE event_search ADD COLUMN value text;
-CREATE INDEX index_value_on_event_search_trigram ON event_search USING gin (f_unaccent(value) gin_trgm_ops);
+ALTER TABLE event_search ADD COLUMN value text COLLATE \"C.UTF-8\";
+CREATE INDEX index_value_on_event_search_bigm ON event_search USING gin (lower(f_unaccent(value)) gin_bigm_ops);
 """
 
 
@@ -60,7 +60,7 @@ def run_create(cur, database_engine, *args, **kwargs):
 
             sql = database_engine.convert_param_style(sql)
 
-            cur.execute(sql, ("event_search_postgres_trigram", progress_json))
+            cur.execute(sql, ("event_search_postgres_bigram", progress_json))
     elif isinstance(database_engine, Sqlite3Engine):
         pass
     else:

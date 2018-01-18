@@ -33,7 +33,7 @@ class SearchStore(BackgroundUpdateStore):
     EVENT_SEARCH_UPDATE_NAME = "event_search"
     EVENT_SEARCH_ORDER_UPDATE_NAME = "event_search_order"
     EVENT_SEARCH_USE_GIST_POSTGRES_NAME = "event_search_postgres_gist"
-    EVENT_SEARCH_POSTGRES_TRIGRAM_NAME = "event_search_postgres_trigram"
+    EVENT_SEARCH_POSTGRES_BIGRAM_NAME = "event_search_postgres_bigram"
 
     def __init__(self, db_conn, hs):
         super(SearchStore, self).__init__(db_conn, hs)
@@ -49,7 +49,7 @@ class SearchStore(BackgroundUpdateStore):
             self._background_reindex_gist_search
         )
         self.register_background_update_handler(
-            self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME,
+            self.EVENT_SEARCH_POSTGRES_BIGRAM_NAME,
             self._background_fill_search_trigram_values
         )
 
@@ -326,17 +326,17 @@ class SearchStore(BackgroundUpdateStore):
             }
 
             self._background_update_progress_txn(
-                txn, self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, progress
+                txn, self.EVENT_SEARCH_POSTGRES_BIGRAM_NAME, progress
             )
 
             return len(event_search_rows)
 
         result = yield self.runInteraction(
-            self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME, reindex_search_txn
+            self.EVENT_SEARCH_POSTGRES_BIGRAM_NAME, reindex_search_txn
         )
 
         if not result:
-            yield self._end_background_update(self.EVENT_SEARCH_POSTGRES_TRIGRAM_NAME)
+            yield self._end_background_update(self.EVENT_SEARCH_POSTGRES_BIGRAM_NAME)
 
         defer.returnValue(result)
 
@@ -381,16 +381,16 @@ class SearchStore(BackgroundUpdateStore):
 
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
-                "SELECT word_similarity(f_unaccent(?), f_unaccent(value)) AS rank,"
+                "SELECT bigm_similarity(lower(f_unaccent(? COLLATE \"C.UTF-8\")), lower(f_unaccent(value))) AS rank,"
                 " room_id, event_id"
                 " FROM event_search"
-                " WHERE f_unaccent(value) ILIKE f_unaccent(?)"
+                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\"))"
             )
             args = [search_query, search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE f_unaccent(value) ILIKE f_unaccent(?)"
+                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\"))"
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -474,7 +474,15 @@ class SearchStore(BackgroundUpdateStore):
         """
         clauses = []
 
-        search_query = search_query = _parse_query(self.database_engine, search_term)
+        search_query = _parse_query(self.database_engine, search_term)
+
+        if search_query == "":
+            defer.returnValue({
+                "results": [],
+                "highlights": [],
+                "count": 0,
+            })
+            return
 
         args = []
 
@@ -519,13 +527,13 @@ class SearchStore(BackgroundUpdateStore):
                 "SELECT"
                 " origin_server_ts, stream_ordering, room_id, event_id"
                 " FROM event_search"
-                " WHERE f_unaccent(value) ILIKE f_unaccent(?) AND "
+                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\")) AND "
             )
             args = [search_query] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE f_unaccent(value) ILIKE f_unaccent(?) AND "
+                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\")) AND "
             )
             count_args = [search_query] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
@@ -636,7 +644,11 @@ def _parse_query(database_engine, search_term):
     results = _tokenize_query(search_term)
 
     if isinstance(database_engine, PostgresEngine):
-        return "%" + "%".join(result for result in results) + "%"
+        results = [result for result in results if len(result.encode('utf-8')) >= 2] # Leave only tokens that is 2 bytes in size or more
+        if not results:
+            return ""
+        else:
+            return "%" + "%".join(result for result in results) + "%"
     elif isinstance(database_engine, Sqlite3Engine):
         return " & ".join(result + "*" for result in results)
     else:
