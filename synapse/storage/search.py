@@ -525,7 +525,14 @@ class SearchStore(BackgroundUpdateStore):
         if isinstance(self.database_engine, PostgresEngine):
             sql = (
                 "SELECT"
-                " origin_server_ts, stream_ordering, room_id, event_id"
+                " origin_server_ts, stream_ordering, room_id, event_id,"
+                " array("
+                " select substring(value from pos for len) from"
+                " (select position(lower(f_unaccent(k COLLATE \"C.UTF-8\")) in lower(f_unaccent(value))) as pos,"
+                " char_length(k COLLATE \"C.UTF-8\") as len"
+                " from (values ('tschus'), ('теле')) as temp(k)) as temp2"
+                " where pos > 0"
+                " ) as highlights"
                 " FROM event_search"
                 " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\")) AND "
             )
@@ -598,7 +605,8 @@ class SearchStore(BackgroundUpdateStore):
 
         highlights = None
         if isinstance(self.database_engine, PostgresEngine):
-            highlights = _find_highlights_in_postgres(search_term)
+            # highlights = _find_highlights_in_postgres(search_term)
+            highlights = _uniq(sum([r["highlights"] for r in results], []))
 
         count_sql += " GROUP BY room_id"
 
@@ -658,3 +666,8 @@ def _parse_query(database_engine, search_term):
 def _tokenize_query(search_term):
     # Pull out the individual words, discarding any non-word characters.
     return re.findall(r"([\w\-]+)", search_term, re.UNICODE)
+
+def _uniq(seq):
+    seen = set()
+    seen_add = seen.add
+    return [x for x in seq if not (x in seen or seen_add(x))]
