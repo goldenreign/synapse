@@ -25,9 +25,9 @@ logger = logging.getLogger(__name__)
 POSTGRES_TABLE = """
 CREATE EXTENSION pg_bigm;
 CREATE EXTENSION unaccent;
-CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text AS $func$ SELECT public.unaccent('public.unaccent', $1) $func$  LANGUAGE sql IMMUTABLE;
-ALTER TABLE event_search ADD COLUMN value text COLLATE \"C.UTF-8\";
-CREATE INDEX index_value_on_event_search_bigm ON event_search USING gin (lower(f_unaccent(value)) gin_bigm_ops);
+CREATE OR REPLACE FUNCTION f_unaccent(text) RETURNS text AS $func$ SELECT public.unaccent('public.unaccent', $1) $func$ LANGUAGE sql IMMUTABLE;
+ALTER TABLE event_search ADD COLUMN value text;
+CREATE INDEX index_value_on_event_search_bigm ON event_search USING gin (f_unaccent(value) gin_bigm_ops);
 """
 
 

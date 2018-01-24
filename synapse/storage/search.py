@@ -50,7 +50,7 @@ class SearchStore(BackgroundUpdateStore):
         )
         self.register_background_update_handler(
             self.EVENT_SEARCH_POSTGRES_BIGRAM_NAME,
-            self._background_fill_search_trigram_values
+            self._background_fill_search_bigram_values
         )
 
     @defer.inlineCallbacks
@@ -249,7 +249,7 @@ class SearchStore(BackgroundUpdateStore):
         defer.returnValue(num_rows)
 
     @defer.inlineCallbacks
-    def _background_fill_search_trigram_values(self, progress, batch_size):
+    def _background_fill_search_bigram_values(self, progress, batch_size):
         target_min_stream_id = progress["target_min_stream_id_inclusive"]
         max_stream_id = progress["max_stream_id_exclusive"]
         rows_inserted = progress.get("rows_inserted", 0)
@@ -303,7 +303,7 @@ class SearchStore(BackgroundUpdateStore):
                     # then skip over it
                     continue
 
-                event_search_rows.append((value, event_id))
+                event_search_rows.append((value.lower(), event_id))
 
             if isinstance(self.database_engine, PostgresEngine):
                 sql = (
@@ -528,21 +528,21 @@ class SearchStore(BackgroundUpdateStore):
                 " origin_server_ts, stream_ordering, room_id, event_id,"
                 " array("
                 " select substring(value from pos for len) from"
-                " (select position(lower(f_unaccent(k COLLATE \"C.UTF-8\")) in lower(f_unaccent(value))) as pos,"
-                " char_length(k COLLATE \"C.UTF-8\") as len"
-                " from (values ('tschus'), ('теле')) as temp(k)) as temp2"
+                " (select position(f_unaccent(k) in f_unaccent(value)) as pos,"
+                " char_length(k) as len"
+                " from (values ('tschuss'), ('теле')) as temp(k)) as temp2"
                 " where pos > 0"
                 " ) as highlights"
                 " FROM event_search"
-                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\")) AND "
+                " WHERE f_unaccent(value) LIKE f_unaccent(?) AND "
             )
-            args = [search_query] + args
+            args = [search_query.lower()] + args
 
             count_sql = (
                 "SELECT room_id, count(*) as count FROM event_search"
-                " WHERE lower(f_unaccent(value)) LIKE lower(f_unaccent(? COLLATE \"C.UTF-8\")) AND "
+                " WHERE f_unaccent(value) LIKE f_unaccent(?) AND "
             )
-            count_args = [search_query] + count_args
+            count_args = [search_query.lower()] + count_args
         elif isinstance(self.database_engine, Sqlite3Engine):
             # We use CROSS JOIN here to ensure we use the right indexes.
             # https://sqlite.org/optoverview.html#crossjoin
